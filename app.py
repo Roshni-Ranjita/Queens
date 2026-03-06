@@ -15,7 +15,12 @@ import tempfile
 # -----------------------------
 def extract_grid_cells(image_path, grid_size=9, border=5, black_thresh=50, dark_text_thresh=90):
     """
-    Returns:
+    Load an image
+    Remove outer borders
+    Split the image into a grid (default 9×9)
+    Extracts the dominant color of each cell
+    Returns the color information for all 81 cells
+    Output:
       cells: dict {(i,j): rgb_median}
       colors: np.ndarray shape (81,3) RGB float
     """
@@ -27,6 +32,7 @@ def extract_grid_cells(image_path, grid_size=9, border=5, black_thresh=50, dark_
     border = max(0, min(border, H // 10, W // 10))
     img_bgr = img_bgr[border:H-border, border:W-border].copy()
 
+    # Getting cell height
     h, w = img_bgr.shape[:2]
     cell_h = h // grid_size
     cell_w = w // grid_size
@@ -34,12 +40,14 @@ def extract_grid_cells(image_path, grid_size=9, border=5, black_thresh=50, dark_
     cells = {}
     colors = []
 
+    # Extract Cell Image
     for i in range(grid_size):
         for j in range(grid_size):
             y1, y2 = i * cell_h, (i + 1) * cell_h
             x1, x2 = j * cell_w, (j + 1) * cell_w
             cell = img_bgr[y1:y2, x1:x2]
 
+            # Takes out the dark pixles/ borders
             gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
             good = (gray > black_thresh) & (gray > dark_text_thresh)
             if np.count_nonzero(good) < 30:
@@ -62,6 +70,23 @@ def extract_grid_cells(image_path, grid_size=9, border=5, black_thresh=50, dark_
 # Color baskets (cluster exactly N colors)
 # -----------------------------
 def create_baskets_from_colors(cells, colors, n_clusters=9):
+    '''
+    Get the Color basket with the help of k-means
+
+    Inputs:
+
+    cells → dictionary mapping (row, col) → RGB color
+
+    colors → array of RGB colors for all cells
+
+    n_clusters → number of color groups (default = 9)
+
+    Output:
+
+    baskets → dictionary grouping cells by color cluster
+
+    labels → cluster index assigned to each cell
+    '''
     coords = list(cells.keys())
 
     # Cluster in LAB space for better perceptual separation
@@ -82,15 +107,29 @@ def create_baskets_from_colors(cells, colors, n_clusters=9):
 # PuLP optimizer with no diagonal adjacency
 # -----------------------------
 def select_one_cell_per_basket_row_col_no_diag(baskets, n_rows, n_cols, exact_one_per_row_col=True, solver=None):
-    B = list(baskets.keys())
+    '''
+    Main Optimizer:
 
+    exactly one cell from each basket ie color (binary linear programming)
+
+    while making sure the chosen cells also satisfy:
+
+    one per row
+
+    one per column
+
+    no two chosen cells touch diagonally
+    '''
+    B = list(baskets.keys()) 
+
+    # A basket can have either 1 or 0, setting the optimizing variable
     # x[b,i,j]
     x = {}
     for b in B:
         for (i, j) in baskets[b]:
             x[(b, i, j)] = pl.LpVariable(f"x_{b}_{i}_{j}", 0, 1, cat=pl.LpBinary)
 
-    prob = pl.LpProblem("OneCellPerBasket_UniqueRowCol_NoDiag", pl.LpMinimize)
+    prob = pl.LpProblem("OneCellPerBasket_UniqueRowCol_NoDiag", pl.LpMinimize) # Dummy objective since our target is to find feasible solution through target
     prob += 0
 
     # exactly one per basket
@@ -139,6 +178,19 @@ def select_one_cell_per_basket_row_col_no_diag(baskets, n_rows, n_cols, exact_on
 # Visualization
 # -----------------------------
 def draw_chosen_on_grid(image_path, chosen, out_path=None, grid_size=9, border=5, draw_cell_box=True):
+    '''
+    Function:
+    Reads the image
+    Removes the outer border for accurate grid alignment
+    Divides the cropped region into grid cells
+    Optionally draws all cell boundaries
+    Marks the chosen cell from each basket
+    Pastes the annotated cropped grid back into the original image
+    Optionally saves the result
+    Returns the final image in RGB
+    Output: 
+    RGB Image
+    '''
     img_bgr = cv2.imread(image_path)
     if img_bgr is None:
         raise FileNotFoundError(image_path)
@@ -158,6 +210,8 @@ def draw_chosen_on_grid(image_path, chosen, out_path=None, grid_size=9, border=5
                 x1, x2 = j * cell_w, (j + 1) * cell_w
                 cv2.rectangle(img_crop, (x1, y1), (x2, y2), (0, 0, 0), 1)
 
+
+    # Mark the chosen cells
     for basket_id, (i, j) in chosen.items():
         y1, y2 = i * cell_h, (i + 1) * cell_h
         x1, x2 = j * cell_w, (j + 1) * cell_w
@@ -199,7 +253,7 @@ def baskets_to_text(baskets):
 # Streamlit App
 # -----------------------------
 st.set_page_config(page_title="9x9 Color Basket Solver", layout="wide")
-st.title("9×9 Snapshot → Color Baskets → PuLP Solution")
+st.title("Queens Solution")
 
 st.sidebar.header("Settings")
 grid_size = st.sidebar.number_input("Grid size", min_value=2, max_value=20, value=9, step=1)
