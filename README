@@ -1,0 +1,61 @@
+# ♟️ Queens Puzzle Solver
+
+This project solves the **Queens puzzle from LinkedIn’s daily games** using image processing and optimization techniques.
+
+The application takes a **screenshot of the puzzle grid** as input and returns an **image with the correct queen placements**.
+
+---
+
+## How It Works
+
+The solution works in four main steps:
+
+### 1. Image Processing
+
+The uploaded image is processed using **OpenCV**.
+
+- The grid is detected  
+- Borders are removed  
+- The board is divided into individual cells  
+- The color of each cell is identified
+
+---
+
+### 2. Cell Bucketing
+
+Cells are grouped based on their colors using the **KMeans clustering algorithm**.
+
+Each cluster represents a region of the puzzle.
+
+---
+
+### 3. Optimization
+
+The puzzle is formulated as a **binary linear programming problem** using **PuLP**.
+
+The solver ensures that:
+
+- Only **one queen is placed per row**
+- Only **one queen is placed per column**
+- Only **one queen is placed per color region**
+- **No queens share the same diagonal**
+
+---
+
+### 4. Generating the Solution
+
+After the optimizer selects the correct cells:
+
+- Queens are drawn on the original image using **OpenCV**
+- The solved puzzle is returned as the final output
+
+---
+
+## Technologies Used
+
+- **Python**
+- **OpenCV**
+- **NumPy**
+- **Scikit-learn (KMeans)**
+- **PuLP**
+- **Streamlit**
