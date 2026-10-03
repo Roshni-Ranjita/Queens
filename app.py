@@ -106,71 +106,152 @@ def create_baskets_from_colors(cells, colors, n_clusters=9):
 # -----------------------------
 # PuLP optimizer with no diagonal adjacency
 # -----------------------------
-def select_one_cell_per_basket_row_col_no_diag(baskets, n_rows, n_cols, exact_one_per_row_col=True, solver=None):
-    '''
-    Main Optimizer:
+def select_one_cell_per_basket_row_col_no_diag(
+    baskets,
+    n_rows,
+    n_cols,
+    exact_one_per_row_col=True,
+    solver=None
+):
+    """
+    Select exactly one cell from each color basket while ensuring:
+    - exactly one selected cell per basket
+    - one selected cell per row
+    - one selected cell per column
+    - no two selected cells are diagonally adjacent
+    """
 
-    exactly one cell from each basket ie color (binary linear programming)
+    B = list(baskets.keys())
 
-    while making sure the chosen cells also satisfy:
+    # PuLP 4.x: create the problem BEFORE creating variables
+    prob = pl.LpProblem(
+        "OneCellPerBasket_UniqueRowCol_NoDiag",
+        pl.LpMinimize
+    )
 
-    one per row
-
-    one per column
-
-    no two chosen cells touch diagonally
-    '''
-    B = list(baskets.keys()) 
-
-    # A basket can have either 1 or 0, setting the optimizing variable
-    # x[b,i,j]
-    x = {}
-    for b in B:
-        for (i, j) in baskets[b]:
-            x[(b, i, j)] = pl.LpVariable(f"x_{b}_{i}_{j}", 0, 1, cat=pl.LpBinary)
-
-    prob = pl.LpProblem("OneCellPerBasket_UniqueRowCol_NoDiag", pl.LpMinimize) # Dummy objective since our target is to find feasible solution through target
+    # Dummy objective
     prob += 0
 
-    # exactly one per basket
-    for b in B:
-        prob += pl.lpSum(x[(b, i, j)] for (i, j) in baskets[b]) == 1
+    # x[b,i,j] = 1 if cell (i,j) from basket b is chosen
+    x = {}
 
-    # y[i,j] occupancy
-    y = {}
-    for i in range(n_rows):
-        for j in range(n_cols):
-            y[(i, j)] = pl.LpVariable(f"y_{i}_{j}", 0, 1, cat=pl.LpBinary)
-            prob += y[(i, j)] == pl.lpSum(x[(b, i, j)] for b in B if (b, i, j) in x)
-
-    # row/col constraints
-    for i in range(n_rows):
-        expr = pl.lpSum(y[(i, j)] for j in range(n_cols))
-        prob += (expr == 1) if exact_one_per_row_col else (expr <= 1)
-
-    for j in range(n_cols):
-        expr = pl.lpSum(y[(i, j)] for i in range(n_rows))
-        prob += (expr == 1) if exact_one_per_row_col else (expr <= 1)
-
-    # no diagonal adjacency
-    for i in range(n_rows - 1):
-        for j in range(n_cols - 1):
-            prob += y[(i, j)] + y[(i + 1, j + 1)] <= 1
-            prob += y[(i, j + 1)] + y[(i + 1, j)] <= 1
-
-    if solver is None:
-        solver = pl.PULP_CBC_CMD(msg=False)
-
-    status = prob.solve(solver)
-    if pl.LpStatus[status] != "Optimal":
-        raise ValueError(f"No feasible solution. Status: {pl.LpStatus[status]}")
-
-    chosen = {}
     for b in B:
         for (i, j) in baskets[b]:
-            if pl.value(x[(b, i, j)]) > 0.5:
+            x[(b, i, j)] = prob.add_variable(
+                f"x_{b}_{i}_{j}",
+                lowBound=0,
+                upBound=1,
+                cat=pl.LpBinary
+            )
+
+    # Exactly one cell per basket
+    for b in B:
+        prob += (
+            pl.lpSum(
+                x[(b, i, j)]
+                for (i, j) in baskets[b]
+            ) == 1
+        )
+
+    # y[i,j] = 1 if cell (i,j) is selected
+    y = {}
+
+    for i in range(n_rows):
+        for j in range(n_cols):
+
+            y[(i, j)] = prob.add_variable(
+                f"y_{i}_{j}",
+                lowBound=0,
+                upBound=1,
+                cat=pl.LpBinary
+            )
+
+            prob += (
+                y[(i, j)]
+                ==
+                pl.lpSum(
+                    x[(b, i, j)]
+                    for b in B
+                    if (b, i, j) in x
+                )
+            )
+
+    # Row constraints
+    for i in range(n_rows):
+
+        expr = pl.lpSum(
+            y[(i, j)]
+            for j in range(n_cols)
+        )
+
+        if exact_one_per_row_col:
+            prob += expr == 1
+        else:
+            prob += expr <= 1
+
+    # Column constraints
+    for j in range(n_cols):
+
+        expr = pl.lpSum(
+            y[(i, j)]
+            for i in range(n_rows)
+        )
+
+        if exact_one_per_row_col:
+            prob += expr == 1
+        else:
+            prob += expr <= 1
+
+    # No diagonal adjacency
+    for i in range(n_rows - 1):
+        for j in range(n_cols - 1):
+
+            # \
+            prob += (
+                y[(i, j)] +
+                y[(i + 1, j + 1)]
+                <= 1
+            )
+
+            # /
+            prob += (
+                y[(i, j + 1)] +
+                y[(i + 1, j)]
+                <= 1
+            )
+
+    # PuLP 4.x changed the CBC solver interface.
+    # Default solve() is sufficient if a supported solver is installed.
+    if solver is None:
+        stats = prob.solve()
+    else:
+        stats = prob.solve(solver)
+
+    # PuLP 4.x solve() returns stats
+    if hasattr(stats, "has_solution"):
+        if not stats.has_solution:
+            raise ValueError(
+                f"No feasible solution. Status: {stats.status_str}"
+            )
+
+    # Extract solution
+    chosen = {}
+
+    for b in B:
+        for (i, j) in baskets[b]:
+
+            value = x[(b, i, j)].varValue
+
+            if value is not None and value > 0.5:
                 chosen[b] = (i, j)
                 break
+
+    if len(chosen) != len(B):
+        raise ValueError(
+            f"Solver did not select all baskets. "
+            f"Selected {len(chosen)} of {len(B)}."
+        )
+
     return chosen
 
 
